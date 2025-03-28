@@ -1,7 +1,3 @@
-// Copyright 2016 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package sync
 
 import (
@@ -9,44 +5,18 @@ import (
 	"sync/atomic"
 )
 
-// readOnly is an immutable struct stored atomically in the Map.read field.
 type kvreadOnly[K comparable, V any] struct {
 	m       map[K]*entry[V]
-	amended bool // true if the dirty map contains some key not in m.
+	amended bool
 }
 
 type KVMap[K comparable, V any] struct {
 	mu sync.Mutex
 
-	// read contains the portion of the map's contents that are safe for
-	// concurrent access (with or without mu held).
-	//
-	// The read field itself is always safe to load, but must only be stored with
-	// mu held.
-	//
-	// Entries stored in read may be updated concurrently without mu, but updating
-	// a previously-expunged entry requires that the entry be copied to the dirty
-	// map and unexpunged with mu held.
 	read atomic.Pointer[kvreadOnly[K, V]]
 
-	// dirty contains the portion of the map's contents that require mu to be
-	// held. To ensure that the dirty map can be promoted to the read map quickly,
-	// it also includes all of the non-expunged entries in the read map.
-	//
-	// Expunged entries are not stored in the dirty map. An expunged entry in the
-	// clean map must be unexpunged and added to the dirty map before a new value
-	// can be stored to it.
-	//
-	// If the dirty map is nil, the next write to the map will initialize it by
-	// making a shallow copy of the clean map, omitting stale entries.
 	dirty map[K]*entry[V]
 
-	// misses counts the number of loads since the read map was last updated that
-	// needed to lock mu to determine whether the key was present.
-	//
-	// Once enough misses have occurred to cover the cost of copying the dirty
-	// map, the dirty map will be promoted to the read map (in the unamended
-	// state) and the next store to the map will make a new dirty copy.
 	misses int
 }
 
@@ -58,24 +28,17 @@ func (m *KVMap[K, V]) loadReadOnly() kvreadOnly[K, V] {
 	return kvreadOnly[K, V]{}
 }
 
-// Load returns the value stored in the map for a key, or nil if no
-// value is present.
-// The ok result indicates whether value was found in the map.
 func (m *KVMap[K, V]) Load(key any) (value any, ok bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
 	if !ok && read.amended {
 		m.mu.Lock()
-		// Avoid reporting a spurious miss if m.dirty got promoted while we were
-		// blocked on m.mu. (If further loads of the same key will not miss, it's
-		// not worth copying the dirty map for this key.)
+
 		read = m.loadReadOnly()
 		e, ok = read.m[key]
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
-			// Regardless of whether the entry was present, record a miss: this key
-			// will take the slow path until the dirty map is promoted to the read
-			// map.
+
 			m.missLocked()
 		}
 		m.mu.Unlock()
@@ -87,16 +50,14 @@ func (m *KVMap[K, V]) Load(key any) (value any, ok bool) {
 	return e.load()
 }
 
-// Store sets the value for a key.
 func (m *KVMap[K, V]) Store(key K, value *V) {
 	_, _ = m.Swap(key, value)
 }
 
-// Clear deletes all the entries, resulting in an empty Map.
 func (m *KVMap[K, V]) Clear() {
 	read := m.loadReadOnly()
 	if len(read.m) == 0 && !read.amended {
-		// Avoid allocating a new readOnly when the map is already clear.
+
 		return
 	}
 
@@ -109,15 +70,12 @@ func (m *KVMap[K, V]) Clear() {
 	}
 
 	clear(m.dirty)
-	// Don't immediately promote the newly-cleared dirty map on the next operation.
+
 	m.misses = 0
 }
 
-// LoadOrStore returns the existing value for the key if present.
-// Otherwise, it stores and returns the given value.
-// The loaded result is true if the value was loaded, false if stored.
 func (m *KVMap[K, V]) LoadOrStore(key K, value *V) (actual any, loaded bool) {
-	// Avoid locking if it's a clean hit.
+
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		actual, loaded, ok := e.tryLoadOrStore(value)
@@ -138,8 +96,7 @@ func (m *KVMap[K, V]) LoadOrStore(key K, value *V) (actual any, loaded bool) {
 		m.missLocked()
 	} else {
 		if !read.amended {
-			// We're adding the first new key to the dirty map.
-			// Make sure it is allocated and mark the read-only map as incomplete.
+
 			m.dirtyLocked()
 			m.read.Store(&kvreadOnly[K, V]{m: read.m, amended: true})
 		}
@@ -151,8 +108,6 @@ func (m *KVMap[K, V]) LoadOrStore(key K, value *V) (actual any, loaded bool) {
 	return actual, loaded
 }
 
-// LoadAndDelete deletes the value for a key, returning the previous value if any.
-// The loaded result reports whether the key was present.
 func (m *KVMap[K, V]) LoadAndDelete(key K) (value *V, loaded bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
@@ -163,9 +118,7 @@ func (m *KVMap[K, V]) LoadAndDelete(key K) (value *V, loaded bool) {
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
 			delete(m.dirty, key)
-			// Regardless of whether the entry was present, record a miss: this key
-			// will take the slow path until the dirty map is promoted to the read
-			// map.
+
 			m.missLocked()
 		}
 		m.mu.Unlock()
@@ -176,13 +129,10 @@ func (m *KVMap[K, V]) LoadAndDelete(key K) (value *V, loaded bool) {
 	return nil, false
 }
 
-// Delete deletes the value for a key.
 func (m *KVMap[K, V]) Delete(key any) {
 	m.LoadAndDelete(key)
 }
 
-// Swap swaps the value for a key and returns the previous value if any.
-// The loaded result reports whether the key was present.
 func (m *KVMap[K, V]) Swap(key K, value *V) (previous *V, loaded bool) {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
@@ -198,8 +148,7 @@ func (m *KVMap[K, V]) Swap(key K, value *V) (previous *V, loaded bool) {
 	read = m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		if e.unexpungeLocked() {
-			// The entry was previously expunged, which implies that there is a
-			// non-nil dirty map and this entry is not in it.
+
 			m.dirty[key] = e
 		}
 		if v := e.swapLocked(value); v != nil {
@@ -213,8 +162,7 @@ func (m *KVMap[K, V]) Swap(key K, value *V) (previous *V, loaded bool) {
 		}
 	} else {
 		if !read.amended {
-			// We're adding the first new key to the dirty map.
-			// Make sure it is allocated and mark the read-only map as incomplete.
+
 			m.dirtyLocked()
 			m.read.Store(&kvreadOnly[K, V]{m: read.m, amended: true})
 		}
@@ -224,15 +172,12 @@ func (m *KVMap[K, V]) Swap(key K, value *V) (previous *V, loaded bool) {
 	return previous, loaded
 }
 
-// CompareAndSwap swaps the old and new values for key
-// if the value stored in the map is equal to old.
-// The old value must be of a comparable type.
 func (m *KVMap[K, V]) CompareAndSwap(key K, old, new *V) (swapped bool) {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		return e.tryCompareAndSwap(old, new)
 	} else if !read.amended {
-		return false // No existing value for key.
+		return false
 	}
 
 	m.mu.Lock()
@@ -243,22 +188,12 @@ func (m *KVMap[K, V]) CompareAndSwap(key K, old, new *V) (swapped bool) {
 		swapped = e.tryCompareAndSwap(old, new)
 	} else if e, ok := m.dirty[key]; ok {
 		swapped = e.tryCompareAndSwap(old, new)
-		// We needed to lock mu in order to load the entry for key,
-		// and the operation didn't change the set of keys in the map
-		// (so it would be made more efficient by promoting the dirty
-		// map to read-only).
-		// Count it as a miss so that we will eventually switch to the
-		// more efficient steady state.
+
 		m.missLocked()
 	}
 	return swapped
 }
 
-// CompareAndDelete deletes the entry for key if its value is equal to old.
-// The old value must be of a comparable type.
-//
-// If there is no current value for key in the map, CompareAndDelete
-// returns false (even if the old value is the nil interface value).
 func (m *KVMap[K, V]) CompareAndDelete(key K, old *V) (deleted bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
@@ -268,13 +203,7 @@ func (m *KVMap[K, V]) CompareAndDelete(key K, old *V) (deleted bool) {
 		e, ok = read.m[key]
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
-			// Don't delete key from m.dirty: we still need to do the “compare” part
-			// of the operation. The entry will eventually be expunged when the
-			// dirty map is promoted to the read map.
-			//
-			// Regardless of whether the entry was present, record a miss: this key
-			// will take the slow path until the dirty map is promoted to the read
-			// map.
+
 			m.missLocked()
 		}
 		m.mu.Unlock()
@@ -291,28 +220,11 @@ func (m *KVMap[K, V]) CompareAndDelete(key K, old *V) (deleted bool) {
 	return false
 }
 
-// Range calls f sequentially for each key and value present in the map.
-// If f returns false, range stops the iteration.
-//
-// Range does not necessarily correspond to any consistent snapshot of the Map's
-// contents: no key will be visited more than once, but if the value for any key
-// is stored or deleted concurrently (including by f), Range may reflect any
-// mapping for that key from any point during the Range call. Range does not
-// block other methods on the receiver; even f itself may call any method on m.
-//
-// Range may be O(N) with the number of elements in the map even if f returns
-// false after a constant number of calls.
 func (m *KVMap[K, V]) Range(f func(key K, value *V) bool) {
-	// We need to be able to iterate over all of the keys that were already
-	// present at the start of the call to Range.
-	// If read.amended is false, then read.m satisfies that property without
-	// requiring us to hold m.mu for a long time.
+
 	read := m.loadReadOnly()
 	if read.amended {
-		// m.dirty contains keys not in read.m. Fortunately, Range is already O(N)
-		// (assuming the caller does not break out early), so a call to Range
-		// amortizes an entire copy of the map: we can promote the dirty copy
-		// immediately!
+
 		m.mu.Lock()
 		read = m.loadReadOnly()
 		if read.amended {
