@@ -128,7 +128,7 @@ func (m *KVMap[K, V]) LoadAndDelete(key K) (value *V, loaded bool) {
 	return nil, false
 }
 
-func (m *KVMap[K, V]) Delete(key any) {
+func (m *KVMap[K, V]) Delete(key K) {
 	m.LoadAndDelete(key)
 }
 
