@@ -87,13 +87,13 @@ func (e *entry[T]) swapLocked(i *T) *T {
 //
 // If the entry is expunged, tryLoadOrStore leaves the entry unchanged and
 // returns with ok==false.
-func (e *entry[T]) tryLoadOrStore(i *T) (actual any, loaded, ok bool) {
+func (e *entry[T]) tryLoadOrStore(i *T) (actual *T, loaded, ok bool) {
 	p := e.p.Load()
 	if p == (*T)(expunged) {
 		return nil, false, false
 	}
 	if p != nil {
-		return *p, true, true
+		return p, true, true
 	}
 
 	// Copy the interface after the first load to make this method more amenable
@@ -109,7 +109,7 @@ func (e *entry[T]) tryLoadOrStore(i *T) (actual any, loaded, ok bool) {
 			return nil, false, false
 		}
 		if p != nil {
-			return *p, true, true
+			return p, true, true
 		}
 	}
 }

@@ -27,7 +27,7 @@ func (m *VMap[T]) loadReadOnly() readOnly[T] {
 	return readOnly[T]{}
 }
 
-func (m *VMap[T]) Load(key any) (value any, ok bool) {
+func (m *VMap[T]) Load(key any) (value *T, ok bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
 	if !ok && read.amended {
@@ -73,7 +73,7 @@ func (m *VMap[T]) Clear() {
 	m.misses = 0
 }
 
-func (m *VMap[T]) LoadOrStore(key any, value *T) (actual any, loaded bool) {
+func (m *VMap[T]) LoadOrStore(key any, value *T) (actual *T, loaded bool) {
 
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
@@ -171,7 +171,7 @@ func (m *VMap[T]) Swap(key any, value *T) (previous *T, loaded bool) {
 	return previous, loaded
 }
 
-func (m *VMap[T]) CompareAndSwap(key, old, new *T) (swapped bool) {
+func (m *VMap[T]) CompareAndSwap(key any, old, new *T) (swapped bool) {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		return e.tryCompareAndSwap(old, new)
@@ -195,7 +195,7 @@ func (m *VMap[T]) CompareAndSwap(key, old, new *T) (swapped bool) {
 
 //
 
-func (m *VMap[T]) CompareAndDelete(key, old *T) (deleted bool) {
+func (m *VMap[T]) CompareAndDelete(key any, old *T) (deleted bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
 	if !ok && read.amended {

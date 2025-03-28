@@ -28,7 +28,7 @@ func (m *KVMap[K, V]) loadReadOnly() kvreadOnly[K, V] {
 	return kvreadOnly[K, V]{}
 }
 
-func (m *KVMap[K, V]) Load(key any) (value any, ok bool) {
+func (m *KVMap[K, V]) Load(key K) (value *V, ok bool) {
 	read := m.loadReadOnly()
 	e, ok := read.m[key]
 	if !ok && read.amended {
@@ -74,8 +74,7 @@ func (m *KVMap[K, V]) Clear() {
 	m.misses = 0
 }
 
-func (m *KVMap[K, V]) LoadOrStore(key K, value *V) (actual any, loaded bool) {
-
+func (m *KVMap[K, V]) LoadOrStore(key K, value *V) (actual *V, loaded bool) {
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
 		actual, loaded, ok := e.tryLoadOrStore(value)
